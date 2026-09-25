@@ -1,0 +1,4 @@
+# Local IOC list: one SHA256 per line. Anything after '#' is a comment.
+# The entry below is a DEMO value used by fixtures/d_vm_suspicious_activity.json.
+# It is not a real malware hash. Replace with your own threat intel.
+9f2b5c0e4a1d7e3b6c8f0a2d4e6b8c1f3a5d7e9b0c2f4a6d8e1b3c5f7a9d0e2b  # demo: svchost_update.exe

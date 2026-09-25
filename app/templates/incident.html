@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}{{ inc.incident_id }}{% endblock %}
+{% set domain = {"entra_audit": "identity", "entra_signin": "identity", "m365_exchange": "data",
+                 "m365_onedrive": "data", "windows_vm": "endpoint", "linux_vm": "endpoint"} %}
+{% set ai_recs = (assessment.validated.recommended_actions|map(attribute='action')|list) if assessment else [] %}
+{% block head %}{% if ai_pending %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
+{% block content %}
+<a class="back" href="/">All incidents</a>
+
+<section class="inc-head">
+  <h1>{{ inc.title }}</h1>
+  <dl class="facts">
+    <div><dt>Incident</dt><dd class="mono">{{ inc.incident_id }}</dd></div>
+    <div><dt>Status</dt><dd>{{ status }}</dd></div>
+    <div><dt>Window</dt><dd>{{ inc.first_seen|short_time }} to {{ inc.last_seen|short_time }}</dd></div>
+    <div><dt>Correlated on</dt><dd>{% for k, v in inc.correlation.key.items() %}same {{ k }}{% if not loop.last %}, {% endif %}{% endfor %},
+      within {{ inc.correlation.window_hours }}h</dd></div>
+  </dl>
+  <dl class="facts">
+    {% if inc.affected_identities %}<div><dt>Identities</dt><dd>{% for u in inc.affected_identities %}{{ u.name }}{% if u.roles %} <span class="sub">({{ u.roles|join(", ") }})</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd></div>{% endif %}
+    {% if inc.applications %}<div><dt>Application</dt><dd>{% for a in inc.applications %}
+      <span class="untrusted" title="Attacker-controllable text">{{ a.name }}</span><br>
+      <span class="sub">Publisher {{ a.publisher or "unknown" }}, {{ "verified" if a.verified else "not verified" }},
+      {{ "registered in this tenant" if a.owner_tenant == a.home_tenant else "registered in another tenant" }}</span><br>
+      <span class="sub mono">appId {{ a.app_id }}</span>{% endfor %}</dd></div>{% endif %}
+    {% if inc.affected_assets %}<div><dt>Assets</dt><dd>{% for s in inc.affected_assets %}<span class="{{ 'mono small' if s.startswith('/subscriptions') }}">{{ s }}</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</dd></div>{% endif %}
+  </dl>
+</section>
+
+<div class="layout">
+<div class="main-col">
+
+<section class="scores" aria-label="Assessment">
+  <div class="score-block">
+    <h2>Severity <span class="sev sev-{{ inc.severity.level|lower }}">{{ inc.severity.level|capitalize }}</span>
+        <span class="score-num">{{ inc.severity.score }}</span></h2>
+    <p class="hint">How damaging this could be if it is what it looks like.</p>
+    <div class="bar" role="img" aria-label="Severity {{ inc.severity.score }} of 100">
+      {% for s in sev_segments %}<span class="seg sev-seg" style="width: {{ s.width }}%" title="{{ s.factor }} +{{ s.points }}"></span>{% endfor %}
+    </div>
+    <ul class="reasons">
+      {% for r in inc.severity.reasons %}<li><span class="pts">+{{ r.points }}</span> {{ r.factor }}
+        {% for e in r.evidence %}<a class="evt" href="#{{ e }}">{{ e }}</a>{% endfor %}</li>{% endfor %}
+    </ul>
+  </div>
+  <div class="score-block">
+    <h2>Confidence <span class="conf">{{ inc.confidence.level|capitalize }}</span>
+        <span class="score-num">{{ inc.confidence.score }}</span></h2>
+    <p class="hint">How strongly the available evidence supports the detection. An evidence score, not a probability.</p>
+    <div class="bar" role="img" aria-label="Confidence {{ inc.confidence.score }} of 100">
+      {% for s in conf_segments %}<span class="seg conf-seg" style="width: {{ s.width }}%" title="{{ s.factor }} +{{ s.points }}"></span>{% endfor %}
+    </div>
+    <ul class="reasons">
+      {% for r in inc.confidence.reasons %}<li><span class="pts">+{{ r.points }}</span> {{ r.factor }}
+        {% for e in r.evidence %}<a class="evt" href="#{{ e }}">{{ e }}</a>{% endfor %}</li>{% endfor %}
+      {% for l in inc.confidence.limitations %}<li class="limit"><span class="pts">{{ l.points if l.points else "·" }}</span> {{ l.text }}</li>{% endfor %}
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>Evidence chain</h2>
+  <p class="hint">Rules matched: {% for r in inc.correlation.matched_rules %}<span class="chip">{{ rules[r].name }}</span>{% endfor %}</p>
+  <ol class="timeline">
+    {% for t in inc.timeline %}
+    <li class="tl {{ domain[t.source] }} {{ t.role }}">
+      <div class="tl-time mono">{{ t.timestamp|short_time }}</div>
+      <div class="tl-body">
+        <div class="tl-label">{{ t.label }}</div>
+        <div class="tl-meta">{{ source_labels[t.source] }}
+          <a class="evt" href="#{{ t.event_id }}">{{ t.event_id }}</a>
+          {% if t.role == "context" %}<span class="sub">context, no rule matched</span>{% endif %}
+          {% for r in t.rule_ids %}<span class="chip">{{ rules[r].name }}</span>{% endfor %}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+<section id="ai">
+  <div class="section-head">
+    <h2>AI investigation</h2>
+    <form method="post" action="/incidents/{{ inc.incident_id }}/reinvestigate"><button class="btn quiet" {% if ai_pending %}disabled{% endif %}>Run again</button></form>
+  </div>
+  {% if ai_pending %}
+    <p class="pending" role="status">{{ model_label }} is assessing this incident on your server. This page refreshes on its own.
+      Evidence, scores and response options above and below are already final.</p>
+  {% endif %}
+  {% if assessment %}
+    {% set v = assessment.validated %}
+    <p class="provenance">
+      {% if assessment.mode == "llm" %}Generated by {{ assessment.model }}{% if assessment.model.startswith("local:") %} on your server{% endif %}{% else %}Deterministic summary (AI not used){% endif %},
+      prompt {{ assessment.prompt_version }}, {{ assessment.created_at|short_time }}.
+      Every cited event was checked against this incident.</p>
+    {% if assessment.validation_errors %}
+    <div class="validator">
+      <strong>Validator removed or flagged {{ assessment.validation_errors|length }} item(s) from the AI output</strong>
+      <ul>{% for e in assessment.validation_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    <p class="summary">{{ v.summary }}</p>
+    {% if v.findings %}<h3>Findings</h3>
+    <ul class="findings">{% for f in v.findings %}<li>{{ f.statement }}
+      {% for e in f.evidence_ids %}<a class="evt" href="#{{ e }}">{{ e }}</a>{% endfor %}</li>{% endfor %}</ul>{% endif %}
+    {% if v.severity_explanation %}<h3>Why this severity</h3><p>{{ v.severity_explanation }}</p>{% endif %}
+    {% if v.confidence_explanation %}<h3>Why this confidence</h3><p>{{ v.confidence_explanation }}</p>{% endif %}
+    {% if v.gaps %}<h3>What the evidence cannot tell us</h3><ul>{% for g in v.gaps %}<li>{{ g }}</li>{% endfor %}</ul>{% endif %}
+    {% if v.next_steps %}<h3>Suggested next steps</h3><ul>{% for s in v.next_steps %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+    {% if v.recommended_actions %}<h3>AI recommendation</h3>
+    <ul>{% for r in v.recommended_actions %}<li><strong>{{ catalog[r.action].label }}</strong>: {{ r.rationale }}</li>{% endfor %}</ul>{% endif %}
+    {% if older_assessments %}<details class="older"><summary>{{ older_assessments|length }} earlier assessment(s), kept unchanged</summary>
+      {% for o in older_assessments %}<p class="sub">{{ o.created_at|short_time }}, {{ o.mode }}: {{ o.validated.summary }}</p>{% endfor %}
+    </details>{% endif %}
+    {% if assessment.raw_output %}<details class="raw"><summary>Raw model output</summary><pre>{{ assessment.raw_output }}</pre></details>{% endif %}
+  {% elif not ai_pending %}
+    <p>No assessment yet. Use Run again to request one.</p>
+  {% endif %}
+</section>
+
+<section id="ask">
+  <h2>Ask about this incident</h2>
+  {% for c in chats %}
+  <div class="qa">
+    <p class="q">{{ c.question }}</p>
+    <p class="a">{{ c.answer }}</p>
+    {% for w in c.check.warnings %}<p class="warn">{{ w }}</p>{% endfor %}
+  </div>
+  {% endfor %}
+  <form method="post" action="/incidents/{{ inc.incident_id }}/ask" class="ask-form">
+    <label for="question" class="visually-hidden">Question</label>
+    <input id="question" name="question" autocomplete="off"
+           placeholder="{{ 'Why is confidence ' ~ inc.confidence.score ~ '? What are we missing?' if llm_ready else 'AI investigator not configured' }}"
+           {% if not llm_ready %}disabled{% endif %}>
+    <button class="btn" {% if not llm_ready %}disabled{% endif %}>Ask</button>
+  </form>
+</section>
+
+<section>
+  <h2>Evidence records</h2>
+  <p class="hint">Normalized fields, with the original provider record underneath. Raw records are stored verbatim.</p>
+  {% for eid in record_order %}{% set e = events[eid] %}
+  <details class="evidence" id="{{ eid }}">
+    <summary><span class="mono">{{ e.timestamp|short_time }}</span> {{ source_labels[e.source] }}: <strong>{{ e.action }}</strong>
+      <span class="mono sub">{{ eid }}</span>{% if eid in inc.context_event_ids %} <span class="sub">context</span>{% endif %}</summary>
+    <table class="kv">
+      <tr><th>Actor</th><td>{{ e.actor.name }} <span class="sub mono">{{ e.actor.id }}</span></td></tr>
+      {% if e.target and (e.target.name or e.target.id) %}<tr><th>Target</th><td>{{ e.target.name }} <span class="sub mono">{{ e.target.id }}</span></td></tr>{% endif %}
+      {% if e.source_ip %}<tr><th>Source IP</th><td class="mono">{{ e.source_ip }}{% if e.location.country %} ({{ e.location.city }}, {{ e.location.country }}){% endif %}</td></tr>{% endif %}
+      {% if e.application_id %}<tr><th>Application ID</th><td class="mono">{{ e.application_id }}</td></tr>{% endif %}
+      {% if e.permissions %}<tr><th>Scopes</th><td>{{ e.permissions|join(", ") }}</td></tr>{% endif %}
+      {% if e.process %}<tr><th>Process</th><td class="mono">{{ e.process.parent_name }} ({{ e.process.parent_pid }}) started {{ e.process.name }} ({{ e.process.pid }})<br>{{ e.process.path }}<br>{{ e.process.command_line }}</td></tr>{% endif %}
+      {% if e.file_hash %}<tr><th>SHA256</th><td class="mono">{{ e.file_hash }}</td></tr>{% endif %}
+      <tr><th>Provider record</th><td class="mono">{{ e.raw_event_id }}</td></tr>
+    </table>
+    <pre>{{ e.raw_event|tojson_pretty }}</pre>
+  </details>
+  {% endfor %}
+</section>
+</div>
+
+<aside class="rail">
+  <section class="panel">
+    <h2>Response</h2>
+    <p class="hint">Only actions in the approved catalog for this incident. Targets come from the evidence, not the AI.</p>
+    {% for a in inc.allowed_actions %}{% set target = inc.action_targets.get(a, {}) %}
+    <div class="action">
+      <div class="action-head">
+        <strong>{{ catalog[a].label }}</strong>
+        <span class="mode {{ 'live' if live[a] else 'sim' }}">{{ "Live" if live[a] else "Simulated" }}</span>
+      </div>
+      {% if a in inc.recommended_actions or a in ai_recs %}<p class="rec">Recommended by
+        {% if a in inc.recommended_actions %}detection rules{% endif %}{% if a in inc.recommended_actions and a in ai_recs %} and {% endif %}{% if a in ai_recs %}AI{% endif %}</p>{% endif %}
+      <p class="effect">{{ catalog[a].effect }}</p>
+      {% if target %}<p class="target">{% for k, v in target.items() if v %}<span class="sub">{{ k|replace("_", " ") }}</span> <span class="mono small">{{ v }}</span><br>{% endfor %}</p>{% endif %}
+      <div class="decide">
+        <form method="post" action="/incidents/{{ inc.incident_id }}/actions">
+          <input type="hidden" name="action_type" value="{{ a }}"><input type="hidden" name="decision" value="APPROVED">
+          <button class="btn approve">Approve</button></form>
+        <form method="post" action="/incidents/{{ inc.incident_id }}/actions">
+          <input type="hidden" name="action_type" value="{{ a }}"><input type="hidden" name="decision" value="REJECTED">
+          <button class="btn quiet">Reject</button></form>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  {% if actions %}
+  <section class="panel">
+    <h2>Actions taken</h2>
+    {% for a in actions %}
+    <div class="taken status-{{ a.status|lower }}">
+      <div><strong>{{ catalog[a.action_type].label if a.action_type in catalog else "Restore VM network" }}</strong></div>
+      <div>{{ a.decision|capitalize }} by {{ a.decided_by }}, {{ a.decided_at|short_time }}</div>
+      {% if a.decision == "APPROVED" %}<div>Result: <strong>{{ a.status|replace("_", " ")|lower }}</strong>{% if a.mode %} ({{ a.mode|lower }}){% endif %}</div>
+      <div class="sub">{{ a.verification }}</div>{% endif %}
+      {% if a.action_type == "ISOLATE_VM" and a.mode == "LIVE" and a.status == "SUCCEEDED" %}
+      <form method="post" action="/actions/{{ a.action_id }}/restore"><button class="btn quiet">Restore network</button></form>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Disposition</h2>
+    {% if dispositions %}{% for d in dispositions %}
+      <p><strong>False positive</strong>, by {{ d.decided_by }}, {{ d.decided_at|short_time }}</p>
+      <blockquote>{{ d.reason }}</blockquote>
+      <p class="sub">Preserved original: severity {{ d.original.severity.level|capitalize }} ({{ d.original.severity.score }}),
+        confidence {{ d.original.confidence.level|capitalize }} ({{ d.original.confidence.score }}),
+        {{ d.original.matched_rules|length }} rules, {{ d.original.ai_assessment_ids|length }} AI assessment(s).</p>
+    {% endfor %}{% else %}
+    <form method="post" action="/incidents/{{ inc.incident_id }}/false-positive" class="fp-form">
+      <label for="reason">Mark as false positive. The detection, scores and AI assessment stay on record.</label>
+      <textarea id="reason" name="reason" rows="3" required minlength="10"
+                placeholder="Approved internal application used during scheduled migration."></textarea>
+      <button class="btn">Mark false positive</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <p class="audit-link"><a href="/audit?incident={{ inc.incident_id }}">{{ ledger_count }} audit ledger records for this incident</a></p>
+</aside>
+</div>
+{% endblock %}

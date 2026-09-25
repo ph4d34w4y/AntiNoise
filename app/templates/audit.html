@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Audit ledger{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Audit ledger</h1>
+    <p class="lede">Append-only, hash-chained record of every ingestion, detection, score, AI output, analyst decision
+      and response result. Newest first.{% if incident %} Showing {{ incident }} only. <a href="/audit">Show all</a>{% endif %}</p>
+  </div>
+</section>
+<p class="chain {{ 'ok' if verify.ok else 'broken' }}">
+  {% if verify.ok %}Chain verified: {{ verify.records }} records, no gaps or modifications.
+  {% else %}Chain check failed: {{ verify.problem }}{% endif %}
+</p>
+<div class="table-wrap">
+<table class="ledger">
+  <thead><tr><th>Seq</th><th>Time</th><th>Record</th><th>Incident</th><th>Actor</th><th>Data</th></tr></thead>
+  <tbody>
+  {% for r in records %}
+  <tr>
+    <td class="num">{{ r.seq }}</td>
+    <td class="mono nowrap">{{ r.timestamp[:19]|replace("T", " ") }}</td>
+    <td>{{ r.record_type }}</td>
+    <td>{% if r.incident_id %}<a class="mono" href="/incidents/{{ r.incident_id }}">{{ r.incident_id }}</a>{% endif %}</td>
+    <td>{{ r.actor }}</td>
+    <td><details><summary class="mono small">hash {{ r.hash[:12] }}</summary><pre>{{ r.data|tojson_pretty }}</pre></details></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

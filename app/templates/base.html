@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Incidents{% endblock %} – Cloud Threat Investigator</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Cloud Threat Investigator</a>
+    <nav>
+      <a href="/" {% if request.url.path == '/' or request.url.path.startswith('/incidents') %}aria-current="page"{% endif %}>Incidents</a>
+      <a href="/audit" {% if request.url.path.startswith('/audit') %}aria-current="page"{% endif %}>Audit ledger</a>
+    </nav>
+  </header>
+  {% if msg %}<div class="notice" role="status">{{ msg }}</div>{% endif %}
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

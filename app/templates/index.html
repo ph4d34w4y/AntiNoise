@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% set scenario_names = {"oauth_consent_abuse": "OAuth consent", "session_misuse": "Session misuse",
+   "privilege_escalation": "Privilege escalation", "vm_suspicious_activity": "VM activity"} %}
+{% block head %}{% if ai_queue %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Incidents</h1>
+    <p class="lede">Each incident was created by deterministic rules from the evidence listed inside it.
+      The AI explains incidents; it never creates them or sets their scores.</p>
+  </div>
+  <div class="ingest">
+    <form method="post" action="/pipeline/fixtures">
+      <button class="btn">Replay sample telemetry</button>
+    </form>
+    {% if collector_ready %}
+    <form method="post" action="/pipeline/live" class="inline-form">
+      <label for="hours">Collect from tenant, last</label>
+      <select id="hours" name="hours"><option value="1">1 hour</option><option value="6">6 hours</option>
+        <option value="24" selected>24 hours</option></select>
+      <button class="btn">Collect</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<p class="env">
+  AI investigator: <strong class="{{ 'ok' if llm_status.ok else 'bad' }}">{{ llm_status.text }}</strong>{% if ai_queue %}, {{ ai_queue }} assessment(s) running{% endif %}.
+  Live response actions: <strong>{{ live_actions|join(", ") if (live_actions and responder_ready) else "none, all actions are simulated" }}</strong>.
+</p>
+
+{% if not incidents %}
+<div class="empty">
+  <h2>No incidents yet</h2>
+  <p>Replay the sample telemetry to run the four attack scenarios and the false-positive scenario
+    through the full pipeline.</p>
+</div>
+{% else %}
+<div class="table-wrap">
+<table class="incidents">
+  <thead><tr><th>Severity</th><th>Confidence</th><th>Incident</th><th>Type</th><th>First seen</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for i in incidents %}
+    <tr class="{{ 'closed' if i.status in ('False positive', 'Contained', 'Closed, no action', 'Contained (simulated)') }}">
+      <td class="nowrap"><span class="sev sev-{{ i.severity.level|lower }}">{{ i.severity.level|capitalize }}</span>
+          <span class="num">{{ i.severity.score }}</span></td>
+      <td class="nowrap"><span class="conf">{{ i.confidence.level|capitalize }}</span> <span class="num">{{ i.confidence.score }}</span></td>
+      <td><a class="inc-link" href="/incidents/{{ i.incident_id }}">{{ i.title }}</a>
+          <div class="sub"><span class="mono">{{ i.incident_id }}</span>{% if i.ai_pending %} AI assessment running{% endif %}</div></td>
+      <td>{{ scenario_names[i.scenario] }}</td>
+      <td class="nowrap">{{ i.first_seen|short_time }}</td>
+      <td>{{ i.status }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}
